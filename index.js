@@ -1,4 +1,3 @@
-const express = require("express");
 const app = express();
 const axios = require("axios");
 const os = require('os');
@@ -12,13 +11,13 @@ const PROJECT_URL = process.env.PROJECT_URL || '';
 const AUTO_ACCESS = process.env.AUTO_ACCESS || false; 
 const FILE_PATH = process.env.FILE_PATH || '.tmp';   
 const SUB_PATH = process.env.SUB_PATH || 'sub';       
-const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;        
+const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;         
 const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913'; 
 const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          
 const ARGO_AUTH = process.env.ARGO_AUTH || '';              
 const ARGO_PORT = process.env.ARGO_PORT || 8001;            
 const CFIP = process.env.CFIP || 'www.visa.com.sg';            
-const CFPORT = process.env.CFPORT || 443;                   
+const CFPORT = process.env.CFPORT || 443;                    
 const NAME = process.env.NAME || '';                        
 
 // 創建執行資料夾
@@ -56,19 +55,33 @@ function cleanupOldFiles() {
   } catch (err) {}
 }
 
-// 生成 Xray 配置
+// 生成 Xray 配置 (已修正 fallback dest 為 PORT，使 HTTP 請求能退回至 Express)
 async function generateConfig() {
   const config = {
     log: { access: '/dev/null', error: '/dev/null', loglevel: 'none' },
     inbounds: [
-      { port: ARGO_PORT, protocol: 'vless', settings: { clients: [{ id: UUID, flow: 'xtls-rprx-vision' }], decryption: 'none', fallbacks: [{ dest: 3001 }, { path: "/vless-argo", dest: 3002 }, { path: "/vmess-argo", dest: 3003 }, { path: "/trojan-argo", dest: 3004 }] }, streamSettings: { network: 'tcp' } },
+      { 
+        port: Number(ARGO_PORT), 
+        protocol: 'vless', 
+        settings: { 
+          clients: [{ id: UUID, flow: 'xtls-rprx-vision' }], 
+          decryption: 'none', 
+          fallbacks: [
+            { dest: Number(PORT) }, // 非節點路徑退回給 Express (3000)
+            { path: "/vless-argo", dest: 3002 }, 
+            { path: "/vmess-argo", dest: 3003 }, 
+            { path: "/trojan-argo", dest: 3004 }
+          ] 
+        }, 
+        streamSettings: { network: 'tcp' } 
+      },
       { port: 3001, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID }], decryption: "none" }, streamSettings: { network: "tcp", security: "none" } },
       { port: 3002, listen: "127.0.0.1", protocol: "vless", settings: { clients: [{ id: UUID, level: 0 }], decryption: "none" }, streamSettings: { network: "ws", security: "none", wsSettings: { path: "/vless-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
       { port: 3003, listen: "127.0.0.1", protocol: "vmess", settings: { clients: [{ id: UUID, alterId: 0 }] }, streamSettings: { network: "ws", wsSettings: { path: "/vmess-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
       { port: 3004, listen: "127.0.0.1", protocol: "trojan", settings: { clients: [{ password: UUID }] }, streamSettings: { network: "ws", security: "none", wsSettings: { path: "/trojan-argo" } }, sniffing: { enabled: true, destOverride: ["http", "tls", "quic"], metadataOnly: false } },
     ],
     dns: { servers: ["https+local://8.8.8.8/dns-query"] },
-    outbounds: [ { protocol: "freedom", tag: "direct" }, {protocol: "blackhole", tag: "block"} ]
+    outbounds: [ { protocol: "freedom", tag: "direct" }, { protocol: "blackhole", tag: "block" } ]
   };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
@@ -124,14 +137,32 @@ async function downloadFilesAndRun() {
   await new Promise(r => setTimeout(r, 5000));
 }
 
-// ... (其餘 extractDomains, getMetaInfo, generateLinks, uploadNodes 功能保持不變)
+// ==================== Express 路由設定 ====================
+
+// 1. 首頁路由
+app.get("/", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send("<h2>Server is running normally.</h2>");
+});
+
+// 2. 訂閱路由 (/sub 或環境變數 SUB_PATH)
+app.get(`/${SUB_PATH}`, (req, res) => {
+  const filePath = path.join(FILE_PATH, 'sub.txt');
+  if (fs.existsSync(filePath)) {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.sendFile(path.resolve(filePath));
+  } else {
+    res.status(404).send("Subscription not ready yet.");
+  }
+});
+
+// ==================== 啟動服務 ====================
 
 async function startserver() {
   try {
     cleanupOldFiles();
     await generateConfig();
     await downloadFilesAndRun();
-    // 這裡調用原有的邏輯...
   } catch (error) {
     console.error('Error:', error);
   }

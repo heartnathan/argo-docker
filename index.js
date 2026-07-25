@@ -164,6 +164,8 @@ async function startserver() {
     cleanupOldFiles();
     await generateConfig();
     await downloadFilesAndRun();
+    await generateLinks(); 
+    console.log("sub.txt has been generated.");
   } catch (error) {
     console.error('Error:', error);
   }
